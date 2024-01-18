@@ -48,10 +48,13 @@ func TestQuery_Regions(t *testing.T) {
 		}, nil)
 
 		im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
-			return DataSource{Settings: models.CloudWatchSettings{AWSDatasourceSettings: awsds.AWSDatasourceSettings{Region: "us-east-2"}}}, nil
+			return DataSource{Settings: models.CloudWatchSettings{
+				AWSDatasourceSettings: awsds.AWSDatasourceSettings{Region: "us-east-2"},
+				GrafanaSettings:       &awsds.AuthSettings{ListMetricsPageLimit: 1000},
+			}}, nil
 		})
 
-		executor := newExecutor(im, newTestConfig(), &fakeSessionCache{}, featuremgmt.WithFeatures())
+		executor := newExecutor(im, &fakeSessionCache{}, featuremgmt.WithFeatures())
 		resp, err := executor.handleGetRegions(
 			context.Background(),
 			backend.PluginContext{
@@ -105,12 +108,15 @@ func Test_handleGetRegions_regionCache(t *testing.T) {
 		return &cli
 	}
 	im := datasource.NewInstanceManager(func(ctx context.Context, s backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
-		return DataSource{Settings: models.CloudWatchSettings{AWSDatasourceSettings: awsds.AWSDatasourceSettings{Region: "us-east-2"}}}, nil
+		return DataSource{Settings: models.CloudWatchSettings{
+			AWSDatasourceSettings: awsds.AWSDatasourceSettings{Region: "us-east-2"},
+			GrafanaSettings:       &awsds.AuthSettings{ListMetricsPageLimit: 1000},
+		}}, nil
 	})
 
 	t.Run("AWS only called once for multiple calls to handleGetRegions", func(t *testing.T) {
 		cli.On("DescribeRegionsWithContext", mock.Anything, mock.Anything).Return(&ec2.DescribeRegionsOutput{}, nil)
-		executor := newExecutor(im, newTestConfig(), &fakeSessionCache{}, featuremgmt.WithFeatures())
+		executor := newExecutor(im, &fakeSessionCache{}, featuremgmt.WithFeatures())
 		_, err := executor.handleGetRegions(
 			context.Background(),
 			backend.PluginContext{DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{}}, nil)
@@ -166,7 +172,7 @@ func TestQuery_InstanceAttributes(t *testing.T) {
 		filterJson, err := json.Marshal(filterMap)
 		require.NoError(t, err)
 
-		executor := newExecutor(im, newTestConfig(), &fakeSessionCache{}, featuremgmt.WithFeatures())
+		executor := newExecutor(im, &fakeSessionCache{}, featuremgmt.WithFeatures())
 		resp, err := executor.handleGetEc2InstanceAttribute(
 			context.Background(),
 			backend.PluginContext{
@@ -244,7 +250,7 @@ func TestQuery_EBSVolumeIDs(t *testing.T) {
 			return DataSource{Settings: models.CloudWatchSettings{}}, nil
 		})
 
-		executor := newExecutor(im, newTestConfig(), &fakeSessionCache{}, featuremgmt.WithFeatures())
+		executor := newExecutor(im, &fakeSessionCache{}, featuremgmt.WithFeatures())
 		resp, err := executor.handleGetEbsVolumeIds(
 			context.Background(),
 			backend.PluginContext{
@@ -311,7 +317,7 @@ func TestQuery_ResourceARNs(t *testing.T) {
 		tagJson, err := json.Marshal(tagMap)
 		require.NoError(t, err)
 
-		executor := newExecutor(im, newTestConfig(), &fakeSessionCache{}, featuremgmt.WithFeatures())
+		executor := newExecutor(im, &fakeSessionCache{}, featuremgmt.WithFeatures())
 		resp, err := executor.handleGetResourceArns(
 			context.Background(),
 			backend.PluginContext{
