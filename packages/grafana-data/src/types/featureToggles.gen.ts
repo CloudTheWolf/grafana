@@ -105,6 +105,7 @@ export interface FeatureToggles {
   grafanaAPIServerWithExperimentalAPIs?: boolean;
   grafanaAPIServerEnsureKubectlAccess?: boolean;
   featureToggleAdminPage?: boolean;
+  awsAsyncQueryCaching?: boolean;
   splitScopes?: boolean;
   searchAlt?: boolean;
   permissionsFilterRemoveSubquery?: boolean;
