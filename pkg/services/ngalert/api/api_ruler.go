@@ -226,7 +226,7 @@ func (srv RulerSrv) RouteGetRulesConfig(c *contextmodel.ReqContext) response.Res
 		return ErrResp(http.StatusBadRequest, errors.New("panel_id must be set with dashboard_uid"), "")
 	}
 
-	configs, _, err := srv.searchAuthorizedAlertRules(c.Req.Context(), c, namespaceUIDs, dashboardUID, panelID)
+	configs, _, err := srv.searchAuthorizedAlertRules(c.Req.Context(), c, nil, dashboardUID, panelID)
 	if err != nil {
 		return errorToResponse(err)
 	}
@@ -236,10 +236,10 @@ func (srv RulerSrv) RouteGetRulesConfig(c *contextmodel.ReqContext) response.Res
 	}
 
 	for groupKey, rules := range configs {
-		folder, ok := namespaceMap[groupKey.NamespaceUID]
+		folder, ok := namespaceMap[groupKey.NamespaceUID] // now it means that user can read rules from folder but cannot read the folder
 		if !ok {
 			userNamespace, id := c.SignedInUser.GetNamespacedID()
-			srv.log.Error("Namespace not visible to the user", "user", id, "userNamespace", userNamespace, "namespace", groupKey.NamespaceUID)
+			srv.log.Debug("Namespace not visible to the user", "user", id, "userNamespace", userNamespace, "namespace", groupKey.NamespaceUID)
 			continue
 		}
 		key := ngmodels.GetNamespaceKey(folder.ParentUID, folder.Title)
