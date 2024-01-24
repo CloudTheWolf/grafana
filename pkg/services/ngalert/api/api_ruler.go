@@ -556,11 +556,19 @@ func (srv RulerSrv) getAuthorizedRuleGroup(ctx context.Context, c *contextmodel.
 // A user is authorized to access a group of rules only when it has permission to query all data sources used by all rules in this group.
 // Returns groups that user is authorized to access, and total count of groups returned by query
 func (srv RulerSrv) searchAuthorizedAlertRules(ctx context.Context, c *contextmodel.ReqContext, folderUIDs []string, dashboardUID string, panelID int64) (map[ngmodels.AlertRuleGroupKey]ngmodels.RulesGroup, int, error) {
+	uids, all := srv.authz.GetFoldersUIDsUserCanReadRules(ctx, c.SignedInUser)
+	if !all && len(uids) == 0 {
+		// if there are no UIDs and user does not have access to all folders, return empty result
+		return nil, 0, nil
+	}
+
 	query := ngmodels.ListAlertRulesQuery{
 		OrgID:         c.SignedInUser.GetOrgID(),
 		NamespaceUIDs: folderUIDs,
 		DashboardUID:  dashboardUID,
 		PanelID:       panelID,
+
+		AuthorizedFoldersUID: uids,
 	}
 	rules, err := srv.store.ListAlertRules(ctx, &query)
 	if err != nil {

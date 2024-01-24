@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -541,9 +542,10 @@ func TestIntegrationInsertAlertRules(t *testing.T) {
 	sqlStore := db.InitTestDB(t)
 	cfg := setting.NewCfg()
 	cfg.UnifiedAlerting.BaseInterval = 1 * time.Second
+	fs := setupFolderService(t, sqlStore, cfg)
 	store := &DBstore{
 		SQLStore:      sqlStore,
-		FolderService: setupFolderService(t, sqlStore, cfg),
+		FolderService: fs,
 		Logger:        log.New("test-dbstore"),
 		Cfg:           cfg.UnifiedAlerting,
 	}
@@ -558,8 +560,23 @@ func TestIntegrationInsertAlertRules(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, len(rules))
 
+	nsUIDs := make([]string, 0)
+	for _, rule := range rules {
+		if slices.Contains(nsUIDs, rule.NamespaceUID) {
+			continue
+		}
+		nsUIDs = append(nsUIDs, rule.NamespaceUID)
+		_, err := fs.Create(context.Background(), &folder.CreateFolderCommand{
+			UID:          rule.NamespaceUID,
+			OrgID:        rule.OrgID,
+			Title:        "TEST" + rule.NamespaceUID,
+			SignedInUser: &user.SignedInUser{UserID: 1},
+		})
+		require.NoError(t, err)
+	}
 	dbRules, err := store.ListAlertRules(context.Background(), &models.ListAlertRulesQuery{
-		OrgID: 1,
+		OrgID:                1,
+		AuthorizedFoldersUID: nsUIDs,
 	})
 	require.NoError(t, err)
 	for idx, keyWithID := range ids {

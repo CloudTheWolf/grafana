@@ -534,6 +534,8 @@ type ListAlertRulesQuery struct {
 	// to return just those for a dashboard and panel.
 	DashboardUID string
 	PanelID      int64
+
+	AuthorizedFoldersUID []string
 }
 
 // CountAlertRulesQuery is the query for counting alert rules

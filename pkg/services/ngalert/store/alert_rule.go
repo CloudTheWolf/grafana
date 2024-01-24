@@ -12,13 +12,10 @@ import (
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/auth/identity"
 	"github.com/grafana/grafana/pkg/services/dashboards"
-	"github.com/grafana/grafana/pkg/services/dashboards/dashboardaccess"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/folder"
 	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
-	"github.com/grafana/grafana/pkg/services/search/model"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
-	"github.com/grafana/grafana/pkg/services/sqlstore/searchstore"
 	"github.com/grafana/grafana/pkg/services/store/entity"
 	"github.com/grafana/grafana/pkg/util"
 )
@@ -332,58 +329,65 @@ func (st DBstore) CountInFolder(ctx context.Context, orgID int64, folderUID stri
 // ListAlertRules is a handler for retrieving alert rules of specific organisation.
 func (st DBstore) ListAlertRules(ctx context.Context, query *ngmodels.ListAlertRulesQuery) (result ngmodels.RulesGroup, err error) {
 	err = st.SQLStore.WithDbSession(ctx, func(sess *db.Session) error {
-		q := sess.Table("alert_rule")
+		return batch(len(query.AuthorizedFoldersUID), 100, func(start, end int) error {
+			q := sess.Table("alert_rule").Alias("ar")
 
-		if query.OrgID >= 0 {
-			q = q.Where("org_id = ?", query.OrgID)
-		}
-
-		if query.DashboardUID != "" {
-			q = q.Where("dashboard_uid = ?", query.DashboardUID)
-			if query.PanelID != 0 {
-				q = q.Where("panel_id = ?", query.PanelID)
+			if query.OrgID >= 0 {
+				q = q.Where("org_id = ?", query.OrgID)
 			}
-		}
 
-		if len(query.NamespaceUIDs) > 0 {
-			args := make([]any, 0, len(query.NamespaceUIDs))
-			in := make([]string, 0, len(query.NamespaceUIDs))
-			for _, namespaceUID := range query.NamespaceUIDs {
-				args = append(args, namespaceUID)
-				in = append(in, "?")
+			if query.DashboardUID != "" {
+				q = q.Where("dashboard_uid = ?", query.DashboardUID)
+				if query.PanelID != 0 {
+					q = q.Where("panel_id = ?", query.PanelID)
+				}
 			}
-			q = q.Where(fmt.Sprintf("namespace_uid IN (%s)", strings.Join(in, ",")), args...)
-		}
 
-		if query.RuleGroup != "" {
-			q = q.Where("rule_group = ?", query.RuleGroup)
-		}
+			if len(query.NamespaceUIDs) > 0 {
+				args := make([]any, 0, len(query.NamespaceUIDs))
+				in := make([]string, 0, len(query.NamespaceUIDs))
+				for _, namespaceUID := range query.NamespaceUIDs {
+					args = append(args, namespaceUID)
+					in = append(in, "?")
+				}
+				q = q.Where(fmt.Sprintf("namespace_uid IN (%s)", strings.Join(in, ",")), args...)
+			}
 
-		q = q.Asc("namespace_uid", "rule_group", "rule_group_idx", "id")
+			if query.RuleGroup != "" {
+				q = q.Where("rule_group = ?", query.RuleGroup)
+			}
 
-		alertRules := make([]*ngmodels.AlertRule, 0)
-		rule := new(ngmodels.AlertRule)
-		rows, err := q.Rows(rule)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			_ = rows.Close()
-		}()
+			if len(query.AuthorizedFoldersUID) > 0 {
+				filter, args := filterByAuthorizedNamespaces(query.AuthorizedFoldersUID, start, end, "ar")
+				q = q.Where(fmt.Sprintf("EXISTS ( %s )", filter), args...)
+			}
 
-		// Deserialize each rule separately in case any of them contain invalid JSON.
-		for rows.Next() {
+			q = q.Asc("namespace_uid", "rule_group", "rule_group_idx", "id")
+
+			alertRules := make([]*ngmodels.AlertRule, 0)
 			rule := new(ngmodels.AlertRule)
-			err = rows.Scan(rule)
+			rows, err := q.Rows(rule)
 			if err != nil {
-				st.Logger.Error("Invalid rule found in DB store, ignoring it", "func", "ListAlertRules", "error", err)
-				continue
+				return err
 			}
-			alertRules = append(alertRules, rule)
-		}
+			defer func() {
+				_ = rows.Close()
+			}()
 
-		result = alertRules
-		return nil
+			// Deserialize each rule separately in case any of them contain invalid JSON.
+			for rows.Next() {
+				rule := new(ngmodels.AlertRule)
+				err = rows.Scan(rule)
+				if err != nil {
+					st.Logger.Error("Invalid rule found in DB store, ignoring it", "func", "ListAlertRules", "error", err)
+					continue
+				}
+				alertRules = append(alertRules, rule)
+			}
+
+			result = alertRules
+			return nil
+		})
 	})
 	return result, err
 }
@@ -647,6 +651,55 @@ func (st DBstore) validateAlertRule(alertRule ngmodels.AlertRule) error {
 	// enforce max rule group name length.
 	if len(alertRule.RuleGroup) > AlertRuleMaxRuleGroupNameLength {
 		return fmt.Errorf("%w: rule group name length should not be greater than %d", ngmodels.ErrAlertRuleFailedValidation, AlertRuleMaxRuleGroupNameLength)
+	}
+
+	return nil
+}
+
+func filterByAuthorizedNamespaces(uids []string, start int, end int, alias string) (string, []any) {
+	// this function implements a
+	s2 := strings.Builder{}
+	s2.WriteString("SELECT 1 FROM folder as f0 \n")
+	for i := 1; i <= folder.MaxNestedFolderDepth; i++ {
+		s2.WriteString(fmt.Sprintf(" LEFT JOIN folder f%d ON f%d.org_id = f%d.org_id AND f%d.uid = f%d.parent_uid\n", i, i, i-1, i, i-1))
+	}
+	partialAncestorUIDs := uids[start:min(end, len(uids))]
+
+	s2.WriteString(fmt.Sprintf("WHERE f0.org_id = %[1]s.org_id AND f0.uid = %[1]s.namespace_uid AND (\n", alias))
+	args := make([]any, 0, len(partialAncestorUIDs)*folder.MaxNestedFolderDepth)
+	for i := 0; i <= folder.MaxNestedFolderDepth; i++ {
+		if i > 0 {
+			s2.WriteString(" OR ")
+		}
+		s2.WriteString(fmt.Sprintf("f%d.uid IN (?%s)\n", i, strings.Repeat(", ?", len(partialAncestorUIDs)-1)))
+		for _, uid := range partialAncestorUIDs {
+			args = append(args, uid)
+		}
+	}
+	s2.WriteString(")")
+
+	return s2.String(), args
+}
+
+func batch(count, batchSize int, eachFn func(start, end int) error) error {
+	if count == 0 {
+		if err := eachFn(0, 0); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	for i := 0; i < count; {
+		end := i + batchSize
+		if end > count {
+			end = count
+		}
+
+		if err := eachFn(i, end); err != nil {
+			return err
+		}
+
+		i = end
 	}
 
 	return nil
