@@ -160,3 +160,7 @@ func (f fakeRuleAccessControlService) AuthorizeRuleChanges(ctx context.Context, 
 func (f fakeRuleAccessControlService) AuthorizeDatasourceAccessForRule(ctx context.Context, user identity.Requester, rule *models.AlertRule) error {
 	return nil
 }
+
+func (f fakeRuleAccessControlService) GetFoldersUIDsUserCanReadRules(ctx context.Context, user identity.Requester) ([]string, bool) {
+	return nil, true
+}
