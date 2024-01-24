@@ -6,6 +6,7 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/grafana/grafana/pkg/expr"
+	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/auth/identity"
 	"github.com/grafana/grafana/pkg/services/dashboards"
@@ -21,6 +22,10 @@ const (
 	ruleDelete = accesscontrol.ActionAlertingRuleDelete
 )
 
+var (
+	logger = log.New("ngalert.accesscontrol")
+)
+
 type RuleService struct {
 	ac accesscontrol.AccessControl
 }
@@ -29,6 +34,27 @@ func NewRuleService(ac accesscontrol.AccessControl) *RuleService {
 	return &RuleService{
 		ac: ac,
 	}
+}
+
+// GetFoldersUIDsUserCanReadRules returns the folder UIDs that the user can read alerting rules from, along with a flag indicating if there are wildcard scopes
+// The method first retrieves the permissions for the `ActionAlertingRuleRead` action from the user's permissions
+// It then iterates over the scopes and attempts to get the resource identifier from each scope
+// If the scope is malformed, it is skipped and a warning message is logged
+func (r *RuleService) GetFoldersUIDsUserCanReadRules(ctx context.Context, user identity.Requester) ([]string, bool) {
+	scopes := user.GetPermissions()[ruleRead]
+	uids := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		uid, isWildcard, err := dashboards.ScopeFoldersProvider.GetResourceIdentifierFromScope(scope)
+		if err != nil {
+			// skip malformed scope
+			logger.FromContext(ctx).Warn("Unknown folder scope. Ignoring", "scope", scope, "error", err)
+		}
+		if isWildcard {
+			return nil, true
+		}
+		uids = append(uids, uid)
+	}
+	return uids, false
 }
 
 // HasAccess returns true if the identity.Requester has all permissions specified by the evaluator. Returns error if access control backend could not evaluate permissions

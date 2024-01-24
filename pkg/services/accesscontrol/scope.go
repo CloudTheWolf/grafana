@@ -99,6 +99,7 @@ type ScopeProvider interface {
 	GetResourceScopeType(typeName string) string
 	GetResourceAllScope() string
 	GetResourceAllIDScope() string
+	GetResourceIdentifierFromScope(scope string) (string, bool, error)
 }
 
 type scopeProviderImpl struct {
@@ -140,6 +141,21 @@ func (s scopeProviderImpl) GetResourceAllScope() string {
 // GetResourceAllIDScope returns scope that has the format "<rootScope>:id:*"
 func (s scopeProviderImpl) GetResourceAllIDScope() string {
 	return GetResourceAllIDScope(s.root)
+}
+
+// GetResourceIdentifierFromScope returns the resource identifier extracted from the given scope.
+// If the scope contains a wildcard identifier "*", the function returns an empty string and a flag "true".
+// Otherwise, it tries to extract identifier and if successful, it returns it and a flag "false".
+// If provided scope does not start with the kind of the provider or identifier could not be detected, it returns ErrInvalidScope.
+func (s scopeProviderImpl) GetResourceIdentifierFromScope(scope string) (string, bool, error) {
+	if !strings.HasSuffix(scope, s.root) {
+		return "", false, ErrInvalidScope
+	}
+	if isWildcard(scope) {
+		return "", true, nil
+	}
+	uid, err := ParseScopeUID(scope)
+	return uid, false, err
 }
 
 func WildcardsFromPrefix(prefix string) Wildcards {
